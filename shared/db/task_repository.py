@@ -12,7 +12,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 
-def add_task(task_type, payload, uploaded_by, scheduled_for=None, max_retries=3):
+def add_task(task_type, payload, priority, uploaded_by, scheduled_for=None, max_retries=3):
     """
     Inserts a new task into the tasks table.
     """
@@ -21,12 +21,13 @@ def add_task(task_type, payload, uploaded_by, scheduled_for=None, max_retries=3)
     INSERT INTO tasks (
         task_type,
         payload,
+        priority,
         status,
         uploaded_by,
         scheduled_for,
         max_retries
     )
-    VALUES (%s, %s, %s, %s, %s, %s)
+    VALUES (%s, %s, %s, %s, %s, %s, %s)
     RETURNING task_id;
     """
 
@@ -38,6 +39,7 @@ def add_task(task_type, payload, uploaded_by, scheduled_for=None, max_retries=3)
                 (
                     task_type,
                     json.dumps(payload),
+                    priority,
                     "PENDING",
                     uploaded_by,
                     scheduled_for,
@@ -59,7 +61,7 @@ def get_task_by_id(task_id):
     Retrieves a task by its ID.
     """
     query = """
-    SELECT task_id, task_type, payload, status, uploaded_by,
+    SELECT task_id, task_type, priority, payload, status, uploaded_by,
            scheduled_for, max_retries, created_at, started_at, result
     FROM tasks
     WHERE task_id = %s;
@@ -76,6 +78,7 @@ def get_task_by_id(task_id):
                 return {
                     "id": str(result["task_id"]),
                     "task_type": result["task_type"],
+                    "priority": result["priority"],
                     "status": result["status"].lower(),
                     "payload": result["payload"] if isinstance(result["payload"], dict) else json.loads(result["payload"] or "{}"),
                     "created_at": result["created_at"],
@@ -93,7 +96,7 @@ def get_all_tasks():
     Retrieves all tasks from the database.
     """
     query = """
-    SELECT task_id, task_type, payload, status, uploaded_by,
+    SELECT task_id, task_type, priority, payload, status, uploaded_by,
            scheduled_for, max_retries, created_at, started_at, result
     FROM tasks
     ORDER BY created_at DESC;
@@ -110,6 +113,7 @@ def get_all_tasks():
                 task = {
                     "id": str(result["task_id"]),
                     "task_type": result["task_type"],
+                    "priority": result["priority"],
                     "status": result["status"].lower(),
                     "payload": result["payload"] if isinstance(result["payload"], dict) else json.loads(result["payload"] or "{}"),
                     "created_at": result["created_at"],

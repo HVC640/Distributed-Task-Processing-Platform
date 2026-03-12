@@ -5,3 +5,9 @@ DB_CONFIG = {
     "user": "postgres",
     "password": "admin"
 }
+
+REDIS_CONFIG = {
+    "host": "localhost",
+    "port": 6379,
+    "database": 0
+}

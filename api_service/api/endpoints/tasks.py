@@ -9,8 +9,9 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from shared.models.task import CreateTaskRequest
 from shared.db import task_repository
+from shared.models.task import CreateTaskRequest
+from shared.redis import queue as redis_queue
 
 # Create router
 router = APIRouter()
@@ -25,10 +26,12 @@ async def create_task(request: CreateTaskRequest):
         task_id = task_repository.add_task(
             task_type=request.task_type,
             payload=request.payload,
+            priority=request.priority,
             uploaded_by=request.uploaded_by,
             scheduled_for=request.scheduled_for,
             max_retries=request.max_retries
         )
+        redis_queue.enqueue_task(task_id, priority=request.priority)
 
         return {"task_id": task_id, "message": "Task created successfully"}
 

@@ -11,7 +11,7 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from shared.config.db_config import DB_CONFIG
+from shared.config.config import DB_CONFIG
 
 def get_connection():
     conn = psycopg2.connect(
