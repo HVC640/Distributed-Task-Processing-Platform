@@ -1,3 +1,4 @@
+from shared.db import connections
 import importlib
 import json
 import os
@@ -9,8 +10,6 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
 
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
-
-from shared.db import connections
 
 
 def add_task(task_type, payload, uploaded_by, scheduled_for=None, max_retries=3):
@@ -76,6 +75,7 @@ def get_task_by_id(task_id):
                 # Convert the result to match our Task model
                 return {
                     "id": str(result["task_id"]),
+                    "task_type": result["task_type"],
                     "status": result["status"].lower(),
                     "payload": result["payload"] if isinstance(result["payload"], dict) else json.loads(result["payload"] or "{}"),
                     "created_at": result["created_at"],
@@ -109,6 +109,7 @@ def get_all_tasks():
             for result in results:
                 task = {
                     "id": str(result["task_id"]),
+                    "task_type": result["task_type"],
                     "status": result["status"].lower(),
                     "payload": result["payload"] if isinstance(result["payload"], dict) else json.loads(result["payload"] or "{}"),
                     "created_at": result["created_at"],
