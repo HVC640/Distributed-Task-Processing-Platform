@@ -1,4 +1,3 @@
-from shared.config.config import REDIS_CONFIG
 import os
 import sys
 import redis
@@ -10,6 +9,7 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+from shared.config.config import REDIS_CONFIG
 
 # Assuming a Redis client is initialized; adjust as needed
 r = redis.Redis(
@@ -32,16 +32,16 @@ def enqueue_task(task_id, priority='low'):
     r.lpush(queue, task_id)
 
 
-def dequeue_task():
+def fetch_task():
     """
     Removes and returns a task from the highest priority queue that has items.
     Returns None if all queues are empty.
     """
-    for queue in ['high_priority_queue', 'medium_priority_queue', 'low_priority_queue']:
-        task = r.rpop(queue)
-        if task:
-            return task.decode('utf-8')  # Assuming task_id is a string
-    return None
+    queue_name, task_id = r.brpop(
+        ['high_priority_queue', 'medium_priority_queue', 'low_priority_queue']
+    )
+    
+    return task_id.decode('utf-8')  # Assuming task_id is a string
 
 
 def add_to_processing_queue(task_id):
@@ -51,12 +51,12 @@ def add_to_processing_queue(task_id):
     r.lpush('processing_queue', task_id)
 
 
-def remove_from_processing_queue():
+def remove_from_processing_queue(task_id):
     """
     Removes and returns a task from the processing queue.
     Returns None if the queue is empty.
     """
-    task = r.rpop('processing_queue')
+    task = r.lrem('processing_queue', 0, task_id)
     if task:
-        return task.decode('utf-8')
+        return task_id
     return None

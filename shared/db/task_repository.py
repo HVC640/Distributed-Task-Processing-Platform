@@ -155,3 +155,26 @@ def update_task_status(task_id, status, result=None):
 
     finally:
         conn.close()
+
+
+def claim_task(task_id, status="RUNNING"):
+    """
+    Atomically claims a task for processing by updating its status.
+    Returns True if the task was successfully claimed, False otherwise.
+    """
+    query = """
+    UPDATE tasks
+    SET status = %s, started_at = NOW()
+    WHERE task_id = %s AND status = 'PENDING';
+    """
+
+    conn = connections.get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, (status.upper(), task_id))
+            conn.commit()
+
+            return cursor.rowcount > 0
+
+    finally:
+        conn.close()
