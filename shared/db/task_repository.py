@@ -62,7 +62,7 @@ def get_task_by_id(task_id):
     """
     query = """
     SELECT task_id, task_type, priority, payload, status, uploaded_by,
-           scheduled_for, max_retries, created_at, started_at, result
+           scheduled_for, retry_count, max_retries, created_at, started_at, result
     FROM tasks
     WHERE task_id = %s;
     """
@@ -79,11 +79,15 @@ def get_task_by_id(task_id):
                     "id": str(result["task_id"]),
                     "task_type": result["task_type"],
                     "priority": result["priority"],
-                    "status": result["status"].lower(),
                     "payload": result["payload"] if isinstance(result["payload"], dict) else json.loads(result["payload"] or "{}"),
+                    "status": result["status"].lower(),
+                    "uploaded_by": result["uploaded_by"],
+                    "scheduled_for": result["scheduled_for"],
+                    "retry_count": result["retry_count"],
+                    "max_retries": result["max_retries"],
                     "created_at": result["created_at"],
                     "started_at": result["started_at"],
-                    "result": result["result"] if isinstance(result["result"], dict) else (json.loads(result["result"]) if result["result"] else None)
+                    "result": result["result"] if isinstance(result["result"], dict) else result["result"]
                 }
             return None
 
@@ -172,6 +176,28 @@ def claim_task(task_id, status="RUNNING"):
     try:
         with conn.cursor() as cursor:
             cursor.execute(query, (status.upper(), task_id))
+            conn.commit()
+
+            return cursor.rowcount > 0
+
+    finally:
+        conn.close()
+
+
+def update_task_retries(task_id, retries):
+    """
+    Updates the retry count of a task.
+    """
+    query = """
+    UPDATE tasks
+    SET retry_count = %s
+    WHERE task_id = %s;
+    """
+
+    conn = connections.get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, (retries, task_id))
             conn.commit()
 
             return cursor.rowcount > 0

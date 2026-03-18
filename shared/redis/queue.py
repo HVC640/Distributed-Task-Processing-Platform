@@ -44,6 +44,23 @@ def fetch_task():
     return task_id.decode('utf-8')  # Assuming task_id is a string
 
 
+def fetch_processing_task():
+    """
+    Fetches all tasks from the processing queue for recovery.
+    Returns a list of task IDs if the processing queue is not empty, otherwise returns an empty list.
+    """
+    tasks = r.lrange('processing_queue', 0, -1)
+    if tasks:
+        return [task.decode('utf-8') for task in tasks]
+    return []
+
+def remove_processing_task(task_id):
+    """
+    Removes a specific task from the processing queue.
+    """
+    r.lrem('processing_queue', 0, task_id)
+
+
 def add_to_processing_queue(task_id):
     """
     Adds a task to the processing queue.
