@@ -14,7 +14,9 @@ REDIS_CONFIG = {
 
 WORKER_CONFIG = {
     "num_workers": 1,
-    "worker_timeout": 5  # seconds
+    "worker_timeout": 5,  # seconds
+    "lease_duration": 30,  # seconds
+    "heartbeat_interval": 10  # seconds
 }
 
 RECOVERY_CONFIG = {

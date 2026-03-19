@@ -1,3 +1,4 @@
+from shared.config.config import WORKER_CONFIG
 from shared.db import connections
 import importlib
 import json
@@ -62,7 +63,8 @@ def get_task_by_id(task_id):
     """
     query = """
     SELECT task_id, task_type, priority, payload, status, uploaded_by,
-           scheduled_for, retry_count, max_retries, created_at, started_at, result
+           scheduled_for, lease_expires_at, worker_id, last_heartbeat, 
+           retry_count, max_retries, created_at, started_at, result
     FROM tasks
     WHERE task_id = %s;
     """
@@ -83,6 +85,9 @@ def get_task_by_id(task_id):
                     "status": result["status"].lower(),
                     "uploaded_by": result["uploaded_by"],
                     "scheduled_for": result["scheduled_for"],
+                    "lease_expires_at": result["lease_expires_at"],
+                    "worker_id": result["worker_id"],
+                    "last_heartbeat": result["last_heartbeat"],
                     "retry_count": result["retry_count"],
                     "max_retries": result["max_retries"],
                     "created_at": result["created_at"],
@@ -161,21 +166,26 @@ def update_task_status(task_id, status, result=None):
         conn.close()
 
 
-def claim_task(task_id, status="RUNNING"):
+def claim_task(task_id, worker_id):
     """
     Atomically claims a task for processing by updating its status.
     Returns True if the task was successfully claimed, False otherwise.
     """
     query = """
     UPDATE tasks
-    SET status = %s, started_at = NOW()
-    WHERE task_id = %s AND status = 'PENDING';
+        SET
+            status = 'RUNNING',
+            worker_id = %s,
+            last_heartbeat = now(),
+            lease_expires_at = now() + interval '%s seconds'
+        WHERE task_id = %s
+        AND status = 'PENDING';
     """
 
     conn = connections.get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(query, (status.upper(), task_id))
+            cursor.execute(query, (worker_id, WORKER_CONFIG["lease_duration"], task_id))
             conn.commit()
 
             return cursor.rowcount > 0
@@ -201,6 +211,47 @@ def update_task_retries(task_id, retries):
             conn.commit()
 
             return cursor.rowcount > 0
+
+    finally:
+        conn.close()
+
+
+def update_heartbeat(task_id, WORKER_ID):
+    """
+    Updates the heartbeat timestamp and lease expiration for a task.
+    """
+    query = """
+    UPDATE tasks
+    SET last_heartbeat = now(), lease_expires_at = now() + interval '%s seconds'
+    WHERE task_id = %s AND worker_id = %s;
+    """
+
+    conn = connections.get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                query, (WORKER_CONFIG["lease_duration"], task_id, WORKER_ID))
+            conn.commit()
+
+    finally:
+        conn.close()
+
+
+def clear_task_ownership(task_id):
+    """
+    Clears the worker ownership and lease information for a task.
+    """
+    query = """
+    UPDATE tasks
+    SET worker_id = NULL, last_heartbeat = NULL, lease_expires_at = NULL
+    WHERE task_id = %s;
+    """
+
+    conn = connections.get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, (task_id,))
+            conn.commit()
 
     finally:
         conn.close()

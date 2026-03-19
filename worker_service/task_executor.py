@@ -1,10 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from shared.redis.queue import add_to_processing_queue, remove_from_processing_queue
-from shared.db.task_repository import get_task_by_id, claim_task, update_task_status
+from shared.db.task_repository import get_task_by_id, claim_task, update_task_status, update_heartbeat
 from shared.config.config import WORKER_CONFIG
 from worker_service.handlers.registry import TASK_HANDLERS
 import os
 import sys
+import threading
+import time
 
 # Simple dynamic import
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -14,26 +16,65 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 
-def execute_task(task_id):
+def is_still_owner(task_id, WORKER_ID):
+    task = get_task_by_id(task_id)
+    return task['worker_id'] == WORKER_ID
+
+
+def heartbeat_loop(task_id, stop_event):
+    while not stop_event.is_set():
+        update_heartbeat(task_id)
+        time.sleep(WORKER_CONFIG["heartbeat_interval"])
+
+
+def execute_task(task_id, WORKER_ID):
     try:
-        if claim_task(task_id, "RUNNING"):
-            task = get_task_by_id(task_id)
-            handler = TASK_HANDLERS[task['task_type']]
-            key = f"{task_id}||{task['started_at']}"
-            add_to_processing_queue(key)
+        # Step 1: Claim task with lease
+        if not claim_task(task_id, WORKER_ID):
+            return
 
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(handler, task['payload'])
+        task = get_task_by_id(task_id)
+        handler = TASK_HANDLERS[task['task_type']]
 
-                try:
-                    result = future.result(timeout=WORKER_CONFIG["worker_timeout"])  # ⏱ timeout here
-                    update_task_status(task_id, "COMPLETED", result)
+        stop_heartbeat = threading.Event()
 
-                except TimeoutError:
-                    update_task_status(task_id, "FAILED", f"Timeout after {WORKER_CONFIG['worker_timeout']}s")
+        # Step 2: Start heartbeat thread
+        heartbeat_thread = threading.Thread(
+            target=heartbeat_loop,
+            args=(task_id, stop_heartbeat),
+            daemon=True
+        )
+        heartbeat_thread.start()
+
+        # Step 3: Add to processing queue
+        key = f"{task_id}"
+        add_to_processing_queue(key)
+
+        # Step 4: Execute task
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(handler, task['payload'])
+
+            try:
+                result = future.result(timeout=WORKER_CONFIG["worker_timeout"])
+
+                # Step 5: Check ownership before marking complete
+                if not is_still_owner(task_id, WORKER_ID):
+                    print(
+                        f"Lost ownership of task {task_id}, skipping completion.")
                     return
 
-            remove_from_processing_queue(key)
+                update_task_status(task_id, "COMPLETED", result)
+
+            except TimeoutError:
+                update_task_status(
+                    task_id, "FAILED", f"Timeout after {WORKER_CONFIG['worker_timeout']} seconds")
+                return
+
+        # Step 6: Cleanup
+        remove_from_processing_queue(key)
 
     except Exception as e:
         update_task_status(task_id, "FAILED", str(e))
+
+    finally:
+        stop_heartbeat.set()
