@@ -1,16 +1,8 @@
+import traceback
+
 from shared.config.config import WORKER_CONFIG
 from shared.db import connections
-import importlib
 import json
-import os
-import sys
-
-# Simple dynamic import of Task model
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
-
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
 
 
 def add_task(task_type, payload, priority, uploaded_by, scheduled_for=None, max_retries=3):
@@ -124,14 +116,18 @@ def get_all_tasks():
                     "task_type": result["task_type"],
                     "priority": result["priority"],
                     "status": result["status"].lower(),
-                    "payload": result["payload"] if isinstance(result["payload"], dict) else json.loads(result["payload"] or "{}"),
+                    "payload": result["payload"],
                     "created_at": result["created_at"],
                     "started_at": result["started_at"],
-                    "result": result["result"] if isinstance(result["result"], dict) else (json.loads(result["result"]) if result["result"] else None)
+                    "result": result["result"]
                 }
                 tasks.append(task)
 
             return tasks
+    except Exception as e:
+        print(f"Error fetching tasks: {e}")
+        print(traceback.format_exc())
+        return []
 
     finally:
         conn.close()
@@ -185,7 +181,8 @@ def claim_task(task_id, worker_id):
     conn = connections.get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(query, (worker_id, WORKER_CONFIG["lease_duration"], task_id))
+            cursor.execute(
+                query, (worker_id, WORKER_CONFIG["lease_duration"], task_id))
             conn.commit()
 
             return cursor.rowcount > 0

@@ -5,11 +5,13 @@ services:
   postgres:
     image: postgres:15
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: tasks_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: task_db
     ports:
       - "5432:5432"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
 
   redis:
     image: redis:7
@@ -17,21 +19,57 @@ services:
       - "6379:6379"
 
   api:
-    build: ./api_service
+    build:
+      context: .
+      dockerfile: api_service/Dockerfile
+    working_dir: /app
     ports:
       - "8000:8000"
     depends_on:
       - postgres
       - redis
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: task_db
+      DB_USER: postgres
+      DB_PASSWORD: admin
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DATABASE: 0
 
   worker:
-    build: ./worker_service
+    build:
+      context: .
+      dockerfile: worker_service/Dockerfile
+    working_dir: /app
     depends_on:
       - postgres
       - redis
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: task_db
+      DB_USER: postgres
+      DB_PASSWORD: admin
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DATABASE: 0
 
   recovery:
-    build: ./recovery_service
+    build:
+      context: .
+      dockerfile: recovery_service/Dockerfile
+    working_dir: /app
     depends_on:
       - postgres
       - redis
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: task_db
+      DB_USER: postgres
+      DB_PASSWORD: admin
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DATABASE: 0

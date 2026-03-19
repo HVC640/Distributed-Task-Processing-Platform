@@ -3,17 +3,8 @@ from shared.redis.queue import add_to_processing_queue, remove_from_processing_q
 from shared.db.task_repository import get_task_by_id, claim_task, update_task_status, update_heartbeat
 from shared.config.config import WORKER_CONFIG
 from worker_service.handlers.registry import TASK_HANDLERS
-import os
-import sys
 import threading
 import time
-
-# Simple dynamic import
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
-
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
 
 
 def is_still_owner(task_id, WORKER_ID):
@@ -21,9 +12,9 @@ def is_still_owner(task_id, WORKER_ID):
     return task['worker_id'] == WORKER_ID
 
 
-def heartbeat_loop(task_id, stop_event):
+def heartbeat_loop(task_id, WORKER_ID, stop_event):
     while not stop_event.is_set():
-        update_heartbeat(task_id)
+        update_heartbeat(task_id, WORKER_ID)
         time.sleep(WORKER_CONFIG["heartbeat_interval"])
 
 
@@ -41,7 +32,7 @@ def execute_task(task_id, WORKER_ID):
         # Step 2: Start heartbeat thread
         heartbeat_thread = threading.Thread(
             target=heartbeat_loop,
-            args=(task_id, stop_heartbeat),
+            args=(task_id, WORKER_ID, stop_heartbeat),
             daemon=True
         )
         heartbeat_thread.start()

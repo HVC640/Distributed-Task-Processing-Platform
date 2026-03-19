@@ -1,21 +1,13 @@
 import os
-import sys
+
 import redis
-
-# Simple dynamic import of Task model
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(current_dir))
-
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
 from shared.config.config import REDIS_CONFIG
 
 # Assuming a Redis client is initialized; adjust as needed
 r = redis.Redis(
-    host=REDIS_CONFIG["host"],
-    port=REDIS_CONFIG["port"],
-    db=REDIS_CONFIG["database"]
+    host=os.getenv('REDIS_HOST', REDIS_CONFIG["host"]),
+    port=os.getenv('REDIS_PORT', REDIS_CONFIG["port"]),
+    db=os.getenv('REDIS_DATABASE', REDIS_CONFIG["database"])
 )
 
 
@@ -40,7 +32,7 @@ def fetch_task():
     queue_name, task_id = r.brpop(
         ['high_priority_queue', 'medium_priority_queue', 'low_priority_queue']
     )
-    
+
     return task_id.decode('utf-8')  # Assuming task_id is a string
 
 
@@ -53,6 +45,7 @@ def fetch_processing_task():
     if tasks:
         return [task.decode('utf-8') for task in tasks]
     return []
+
 
 def remove_processing_task(task_id):
     """

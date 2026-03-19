@@ -2,10 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-
-RUN pip install --no-cache-dir -r requirements.txt
-
+# Copy everything (including shared)
 COPY . .
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Install dependencies
+RUN pip install --no-cache-dir -r api_service/requirements.txt
+
+# Set working directory to app
+WORKDIR /app
+
+CMD ["python", "-m",  "api_service.main"]
+
+# CMD ["sleep", "infinity"]

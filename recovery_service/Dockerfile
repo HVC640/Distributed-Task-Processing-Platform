@@ -2,10 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-
-RUN pip install --no-cache-dir -r requirements.txt
-
+# Copy everything (including shared)
 COPY . .
 
-CMD ["python", "main.py"]
+# Install dependencies
+RUN pip install --no-cache-dir -r recovery_service/requirements.txt
+
+# Set working directory to app
+WORKDIR /app
+
+CMD ["python", "-m",  "recovery_service.main"]

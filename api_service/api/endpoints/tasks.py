@@ -1,14 +1,4 @@
 from fastapi import APIRouter, HTTPException
-import os
-import sys
-
-# Simple dynamic import of Task model
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
-
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
 from shared.db import task_repository
 from shared.models.task import CreateTaskRequest
 from shared.redis import queue as redis_queue
