@@ -1,17 +1,21 @@
 # Distributed Task Processing Platform — System Design
 
-## 1. Goal
+---
 
-Build a distributed background job processing system capable of:
+# 1. Goal
+
+Build a **production-style distributed background job processing system** capable of:
 
 * Accepting tasks via API
 * Executing tasks asynchronously
-* Handling worker crashes
+* Handling worker crashes and partial failures
 * Supporting retries and priority queues
 * Scaling workers horizontally
-* Recovering stuck tasks automatically
+* Preventing duplicate execution using lease-based ownership
+* Providing observability (logging + metrics)
+* Protecting APIs using rate limiting
 
-This system is inspired by job systems like:
+Inspired by:
 
 * Celery
 * Sidekiq
@@ -21,35 +25,29 @@ This system is inspired by job systems like:
 
 # 2. High-Level Architecture
 
-```
+```text
 Client
    │
    ▼
 FastAPI API Service
    │
    ▼
-PostgreSQL (Task Metadata)
+PostgreSQL (Task Metadata + Ownership)
    │
    ▼
-Redis Main Queue
+Redis (Priority Queues + Metrics + Rate Limiting)
    │
    ▼
-Workers (BRPOP blocking)
-   │
-   ▼
-Processing Queue
+Workers (BRPOP blocking + Lease + Heartbeat)
    │
    ▼
 Task Execution
    │
    ▼
 Update DB Status
-   │
-   ▼
-Remove from Processing Queue
 ```
 
-Recovery Service periodically checks for stuck tasks and requeues them.
+Recovery Service ensures correctness using **lease expiration**.
 
 ---
 
@@ -57,145 +55,162 @@ Recovery Service periodically checks for stuck tasks and requeues them.
 
 ## 3.1 API Service
 
-Responsible for:
+Responsibilities:
 
-* Creating tasks
-* Validating task payload
-* Pushing task IDs to Redis queue
-* Providing task status APIs
+* Task creation
+* Payload validation (Pydantic)
+* Rate limiting (Token Bucket via Redis)
+* Metrics collection
+* Exposing system metrics
 
 Endpoints:
 
-```
+```text
 POST /tasks
 GET /tasks/{task_id}
 GET /tasks
+GET /metrics
 ```
 
 ---
 
 ## 3.2 Worker Service
 
-Workers run continuously and process tasks.
+Workers process tasks asynchronously.
 
-Worker flow:
+### Worker Flow
 
+```text
+1. BRPOP from priority queues
+2. Claim task using lease (DB)
+3. Start heartbeat thread
+4. Execute handler
+5. Validate ownership before completion
+6. Update DB status
+7. Stop heartbeat
 ```
-1. BRPOP main_queue
-2. Move task_id → processing_queue
-3. Claim task in DB (pending → running)
-4. Execute handler(task.payload)
-5. Update DB status
-6. Remove task from processing_queue
+
+---
+
+### Lease-Based Ownership
+
+Worker claims task:
+
+```sql
+UPDATE tasks
+SET
+  status = 'RUNNING',
+  worker_id = ?,
+  lease_expires_at = now() + interval '30 seconds'
+WHERE task_id = ?
+AND status = 'PENDING'
 ```
 
-Workers execute Python handler functions mapped by `task_type`.
+---
 
-Example:
+### Heartbeat Mechanism
 
+Worker periodically updates:
+
+```text
+last_heartbeat
+lease_expires_at
 ```
-TASK_HANDLERS = {
-  "send_email": send_email_handler,
-  "resize_image": resize_image_handler
-}
+
+---
+
+### Ownership Validation
+
+Before completing:
+
+```text
+Check worker_id == current worker
 ```
+
+Prevents stale workers from corrupting state.
 
 ---
 
 ## 3.3 Recovery Service
 
-Background process responsible for detecting stuck tasks.
+Responsible for detecting and recovering **orphaned tasks**.
 
-Runs periodically (e.g. every 2 minutes).
+---
 
-Logic:
+### Recovery Logic (Updated)
 
-```
+```sql
 SELECT *
 FROM tasks
-WHERE status = 'running'
-AND started_at < now() - timeout
+WHERE status = 'RUNNING'
+AND lease_expires_at < now()
 ```
 
-If retries remain:
+---
 
-```
-status → pending
-retry_count += 1
-push task_id back to queue
-```
+### Recovery Flow
 
-Else:
-
-```
-status → failed
-error_message → timeout
+```text
+Lease expired → worker assumed dead
+↓
+Clear ownership
+↓
+Increment retry_count
+↓
+Requeue task
 ```
 
 ---
 
 # 4. Queue Architecture
 
-Redis queues:
+Redis priority queues:
 
-```
+```text
 high_priority_queue
 medium_priority_queue
 low_priority_queue
 ```
 
-Workers check queues in priority order.
+Workers consume using:
 
-Example:
-
-```
-pop(high)
-if empty → pop(medium)
-if empty → pop(low)
+```text
+BRPOP(high, medium, low)
 ```
 
 ---
 
 # 5. Worker Model
 
-Model A: Fixed Workers
+* Fixed worker model (initial)
+* Horizontal scaling supported
 
-Example:
-
-```
-Worker1
-Worker2
-Worker3
-Worker4
-Worker5
+```text
+docker-compose up --scale worker=5
 ```
 
 Each worker processes one task at a time.
-
-Scaling later:
-
-```
-docker-compose scale worker=10
-```
 
 ---
 
 # 6. Task Lifecycle
 
-```
+```text
 pending
    ↓
-running
+running (lease acquired)
    ↓
 completed
    OR
 failed
 ```
 
-Recovery path:
+---
 
-```
-running (timeout)
+### Recovery Path
+
+```text
+running + lease expired
    ↓
 retrying
    ↓
@@ -208,9 +223,7 @@ pending
 
 Primary table: `tasks`
 
-Fields:
-
-```
+```text
 task_id (UUID PRIMARY KEY)
 task_type
 payload (JSONB)
@@ -224,120 +237,124 @@ retry_count
 max_retries
 result (JSONB)
 error_message
+worker_id
+last_heartbeat
+lease_expires_at
 ```
-
-Important notes:
-
-* `payload` stores task parameters
-* `result` stores task output
-* JSONB used for flexibility
-* `task_id` uses UUID for distributed safety
 
 ---
 
-# 8. Task Payload Model
+# 8. Observability
 
-Example payloads:
+## 8.1 Logging (Structured)
 
-Email task:
+* JSON structured logs
+* Centralized via Docker stdout
+* Includes:
 
+```text
+timestamp
+service
+level
+event
+task_id
+worker_id
+message
 ```
-{
-  "email": "user@test.com",
-  "subject": "Hello"
-}
-```
-
-Image task:
-
-```
-{
-  "image_url": "...",
-  "size": "1024x1024"
-}
-```
-
-Validation handled by API using Pydantic models.
 
 ---
 
-# 9. Reliability Mechanisms
+## 8.2 Metrics
 
-### Task Claiming
+Stored in Redis.
 
-Worker claims task using DB lock:
+Tracked metrics:
 
+```text
+tasks_created
+tasks_completed
+tasks_failed
+tasks_retried
+task_execution_time
+tasks_in_queue
 ```
-UPDATE tasks
-SET status = 'running'
-WHERE task_id = ?
-AND status = 'pending'
-```
-
-Ensures only one worker processes a task.
 
 ---
 
-### Processing Queue
+## 8.3 Metrics Endpoint
 
-When worker picks a task:
-
+```text
+GET /metrics
 ```
-main_queue → processing_queue
-```
-
-Prevents lost tasks if worker crashes.
 
 ---
 
-### Retry Mechanism
+# 9. Rate Limiting
 
-Tasks retry until:
-
-```
-retry_count >= max_retries
-```
-
-Then status becomes `failed`.
+Token Bucket algorithm using Redis.
 
 ---
 
-# 10. Repository Structure
+### Features
 
-Monorepo layout:
+* Burst handling
+* Distributed safe (Lua script)
+* Per-user rate limiting
 
+---
+
+### Flow
+
+```text
+Request → Redis token bucket → allow / reject
 ```
+
+---
+
+# 10. Reliability Mechanisms (Updated)
+
+| Mechanism        | Purpose                   |
+| ---------------- | ------------------------- |
+| DB Claim         | Prevent duplicate workers |
+| Processing Queue | Prevent task loss         |
+| Lease            | Ownership control         |
+| Heartbeat        | Liveness detection        |
+| Recovery Service | Fault recovery            |
+| Timeout          | Long task protection      |
+
+---
+
+# 11. Repository Structure
+
+```text
 task-platform/
 
 api_service/
-  main.py
-
 worker_service/
-  main.py
-
 recovery_service/
-  main.py
 
 shared/
-  models/
   db/
-  config/
+  models/
+  logging/
+  metrics/
+  rate_limiter/
 
 docker/
 docker-compose.yml
-README.md
-system-design.md
-```
 
-Each service runs independently.
+system-design.md
+architecture-diagram.md
+engineering-decisions.md
+```
 
 ---
 
-# 11. Deployment Model
+# 12. Deployment Model
 
-Docker Compose starts:
+Docker Compose runs:
 
-```
+```text
 API Service
 Worker Service
 Recovery Service
@@ -345,75 +362,50 @@ Redis
 PostgreSQL
 ```
 
-Example:
+---
 
-```
-docker-compose up
-```
+# 13. System Guarantees
 
-Workers can scale horizontally.
+| Property                           | Status |
+| ---------------------------------- | ------ |
+| At-least-once execution            | ✅      |
+| Fault tolerance                    | ✅      |
+| Horizontal scaling                 | ✅      |
+| Duplicate prevention (best-effort) | ✅      |
+| Exactly-once execution             | ❌      |
 
 ---
 
-# 12. Development Roadmap
+# 14. Key Design Tradeoffs
 
-### Phase 1
-
-API + Database
-
-```
-Client → API → DB
-```
-
-### Phase 2
-
-Queue Integration
-
-```
-Client → API → DB → Redis
-```
-
-### Phase 3
-
-Worker Execution
-
-```
-Client → API → DB → Redis → Worker
-```
-
-### Phase 4
-
-Recovery Service
-
-```
-Client → API → DB → Redis → Worker
-                      ↑
-                 Recovery Service
-```
+* Chose lease over strict locking → simpler distributed model
+* Accepted at-least-once execution → practical reliability
+* Used Redis for metrics → fast but non-persistent
+* Used stdout logging → simple and scalable
 
 ---
 
-# 13. Future Enhancements
+# 15. Future Enhancements
 
-Possible extensions:
-
-* auto-scaling workers
-* task scheduling
-* metrics and monitoring
-* distributed event system
-* AI workload support
-* multi-region queues
+* Prometheus + Grafana (metrics)
+* ELK stack (logging)
+* Kafka (event-driven system)
+* Auto-scaling workers
+* Task scheduling (cron-based)
+* Multi-region support
 
 ---
 
-# 14. Learning Goals
+# 16. Learning Outcomes
 
-This project demonstrates:
+This system demonstrates:
 
-* asynchronous system design
-* distributed workers
-* queue-based architecture
-* failure recovery
-* retry logic
-* scalable backend architecture
-* production-style service structure
+* distributed system design
+* lease-based ownership model
+* fault tolerance & recovery
+* async processing architecture
+* observability (logs + metrics)
+* API protection (rate limiting)
+* production-style service design
+
+---

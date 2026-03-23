@@ -19,14 +19,14 @@ Advantages:
 * globally unique across distributed systems
 * no central coordination required
 * prevents predictable task enumeration
-* workers and services can generate IDs independently
+* safe across multiple services
 
 Tradeoff:
 
 * slightly larger storage size
 * marginally slower indexing
 
-For a distributed system, the benefits outweigh the costs.
+For distributed systems, UUID provides stronger guarantees.
 
 ---
 
@@ -34,40 +34,29 @@ For a distributed system, the benefits outweigh the costs.
 
 ## Decision
 
-Store task payloads using **JSONB** instead of structured columns.
-
-Example:
-
-```json
-{
-  "email": "user@test.com",
-  "subject": "Hello"
-}
-```
+Store task payloads using **JSONB**.
 
 ## Reason
 
 Advantages:
 
-* supports many task types
-* avoids schema modifications for new tasks
-* enables flexible task payloads
+* supports multiple task types
+* avoids schema changes
+* flexible structure
 
 Tradeoff:
 
-* less strict schema enforcement
+* weaker schema enforcement
 
 Mitigation:
 
-* payload validation occurs at the API layer using Pydantic models.
+* strict validation at API layer using Pydantic
 
 ---
 
-# 3. Database First → Queue Later
+# 3. Database Before Queue
 
 ## Decision
-
-When a task is created:
 
 ```text
 API → DB insert → push task_id to queue
@@ -77,12 +66,14 @@ API → DB insert → push task_id to queue
 
 Advantages:
 
-* ensures tasks are never lost
-* enables status tracking
-* supports rate limiting
-* allows queue reconstruction if Redis fails
+* prevents task loss
+* enables state tracking
+* supports recovery
+* ensures system consistency
 
-This pattern is used in many reliable background job systems.
+This follows the principle:
+
+> **DB = source of truth, queue = delivery mechanism**
 
 ---
 
@@ -90,42 +81,38 @@ This pattern is used in many reliable background job systems.
 
 ## Decision
 
-Use **Redis queues**.
+Use **Redis**.
 
 ## Reason
 
 Advantages:
 
-* extremely fast
-* simple queue operations
-* supports blocking pops
-* widely used in background job systems
+* high throughput
+* supports blocking operations
+* simple and efficient
+* widely adopted
 
-Redis acts only as a **delivery mechanism**, while PostgreSQL stores task state.
+Redis is used as:
+
+* task queue
+* metrics store
+* rate limiter backend
 
 ---
 
-# 5. Worker Task Fetch Strategy
+# 5. Worker Fetch Strategy
 
 ## Decision
 
-Use **blocking queue operations (BRPOP)**.
-
-Example:
-
-```text
-BRPOP main_queue
-```
+Use **BRPOP (blocking queue)**.
 
 ## Reason
 
 Advantages:
 
-* no CPU wasted during idle periods
+* no CPU wastage
 * instant task pickup
-* avoids continuous polling
-
-This is the most efficient worker consumption model.
+* efficient idle handling
 
 ---
 
@@ -133,18 +120,18 @@ This is the most efficient worker consumption model.
 
 ## Decision
 
-Each worker processes **one task at a time**.
+One task per worker.
 
 ## Reason
 
 Advantages:
 
-* simple concurrency model
-* prevents DB overload
+* simple execution model
+* predictable load
 * easier debugging
-* predictable throughput
+* avoids resource contention
 
-Future scaling can be achieved by increasing the number of worker instances.
+Scaling is achieved horizontally.
 
 ---
 
@@ -152,27 +139,19 @@ Future scaling can be achieved by increasing the number of worker instances.
 
 ## Decision
 
-Use **fixed number of workers initially**.
-
-Example:
+Horizontal scaling using multiple workers.
 
 ```text
-worker_1
-worker_2
-worker_3
-worker_4
-worker_5
+docker-compose up --scale worker=N
 ```
 
 ## Reason
 
 Advantages:
 
-* simpler architecture
-* easier debugging
-* predictable load on database
-
-Dynamic scaling will be introduced in later system versions.
+* linear scalability
+* no shared state between workers
+* aligns with distributed systems
 
 ---
 
@@ -180,236 +159,326 @@ Dynamic scaling will be introduced in later system versions.
 
 ## Decision
 
-Use **multiple queues instead of priority scoring**.
-
-Example:
+Use **multiple priority queues**.
 
 ```text
-high_priority_queue
-medium_priority_queue
-low_priority_queue
+high / medium / low
 ```
-
-Workers check queues in priority order.
 
 ## Reason
 
 Advantages:
 
-* simpler implementation
-* avoids starvation problems
-* easier debugging
-* common industry pattern
+* simple implementation
+* avoids complex scheduling logic
+* predictable execution order
 
-Using dynamic priority algorithms (like MLFQ) would introduce unnecessary complexity.
+Rejected:
+
+* dynamic priority algorithms (too complex for current scope)
 
 ---
 
-# 9. Worker Handler Strategy
+# 9. Task Handler Strategy
 
 ## Decision
 
-Use a **task handler registry**.
-
-Example:
+Use **explicit handler registry**.
 
 ```python
-TASK_HANDLERS = {
-    "send_email": send_email_handler,
-    "resize_image": resize_image_handler
-}
+TASK_HANDLERS = {...}
 ```
 
 ## Reason
 
 Advantages:
 
-* explicit control over supported tasks
-* safer execution
-* easier debugging
-
-Dynamic imports were avoided due to potential runtime risks.
+* safe execution
+* controlled behavior
+* avoids dynamic execution risks
 
 ---
 
-# 10. Processing Queue Design
+# 10. Processing Model
 
 ## Decision
 
-When a worker receives a task:
+Workers directly process tasks after queue fetch.
+
+## Reason
+
+* reduces system complexity
+* avoids unnecessary intermediate layers
+* keeps execution flow simple
+
+---
+
+# 11. Lease-Based Ownership Model
+
+## Decision
+
+Use **lease + worker_id** instead of relying only on status.
+
+## Reason
+
+Problem:
+
+* worker crash leads to stuck tasks
+* duplicate execution risk
+
+Solution:
+
+* worker acquires task with lease
+* lease expires if worker dies
+
+Advantages:
+
+* prevents indefinite locking
+* enables safe recovery
+* works well in distributed systems
+
+---
+
+# 12. Heartbeat Mechanism
+
+## Decision
+
+Workers periodically update:
 
 ```text
-main_queue → processing_queue
+last_heartbeat
+lease_expires_at
 ```
 
 ## Reason
 
 Advantages:
 
-* prevents task loss if worker crashes
-* enables recovery of stuck tasks
-* easier monitoring of in-progress tasks
-
-This pattern is used in many robust job processing systems.
+* tracks worker liveness
+* prevents premature recovery
+* supports long-running tasks
 
 ---
 
-# 11. Failure Recovery Strategy
+# 13. Recovery Strategy
 
 ## Decision
 
-Introduce a **Recovery Service** that periodically checks for stuck tasks.
-
-Example query:
+Use a **Recovery Service based on lease expiration**.
 
 ```sql
-SELECT *
-FROM tasks
-WHERE status = 'running'
-AND started_at < now() - timeout
+WHERE lease_expires_at < now()
 ```
 
 ## Reason
 
 Advantages:
 
-* detects crashed workers
-* requeues unfinished tasks
-* prevents system deadlocks
+* detects dead workers
+* requeues orphaned tasks
+* ensures system continuity
 
-This recovery mechanism ensures system reliability.
+Rejected:
+
+* started_at-based recovery (inaccurate for long tasks)
 
 ---
 
-# 12. Repository Structure
+# 14. At-Least-Once Execution Model
 
 ## Decision
 
-Use a **monorepo** structure.
+Accept **at-least-once execution**.
 
-Example:
+## Reason
 
-```text
-task-platform/
-api_service/
-worker_service/
-recovery_service/
-shared/
-```
+* simpler to implement
+* practical in distributed systems
+* avoids heavy coordination
+
+Tradeoff:
+
+* possible duplicate execution
+
+Mitigation:
+
+* idempotent task design
+* ownership validation
+
+---
+
+# 15. Ownership Validation
+
+## Decision
+
+Worker verifies ownership before updating DB.
+
+## Reason
+
+Prevents:
+
+* stale workers overwriting results
+* race conditions
+
+---
+
+# 16. Observability — Logging
+
+## Decision
+
+Use **structured JSON logging via stdout**.
 
 ## Reason
 
 Advantages:
 
-* simpler development workflow
-* shared utilities and models
-* easier local testing
-* consistent dependency management
+* centralized via Docker
+* easy integration with log systems
+* machine-readable
 
-Each service still runs independently.
+Rejected:
+
+* file-based logging (not scalable in containers)
 
 ---
 
-# 13. Service Separation
+# 17. Observability — Metrics
 
 ## Decision
 
-API, Worker, and Recovery services run independently.
+Use **Redis-based metrics**.
+
+## Reason
+
+Advantages:
+
+* low latency
+* simple implementation
+* real-time visibility
+
+Tradeoff:
+
+* non-persistent
+
+Accepted for current scope.
+
+---
+
+# 18. Rate Limiting Strategy
+
+## Decision
+
+Use **Token Bucket algorithm with Redis + Lua**.
+
+## Reason
+
+Advantages:
+
+* supports burst traffic
+* smooth rate limiting
+* atomic (Lua script)
+* distributed safe
+
+Rejected:
+
+* fixed window (inaccurate)
+* sliding window (more complex)
+
+---
+
+# 19. Repository Structure
+
+## Decision
+
+Use **monorepo**.
+
+## Reason
+
+Advantages:
+
+* shared code reuse
+* consistent structure
+* easier local development
+
+---
+
+# 20. Service Separation
+
+## Decision
+
+Separate services:
+
+* API
+* Worker
+* Recovery
 
 ## Reason
 
 Advantages:
 
 * loose coupling
-* easier scaling
-* independent deployment
-* improved fault isolation
-
-Distributed systems should avoid tightly coupled services.
+* independent scaling
+* fault isolation
 
 ---
 
-# 14. Development Strategy
+# 21. Development Strategy
 
 ## Decision
 
-Use **top-down development**.
-
-Implementation order:
+Top-down development.
 
 ```text
-API → Database → Queue → Worker → Recovery
+API → DB → Queue → Worker → Recovery → Observability
 ```
 
 ## Reason
 
 Advantages:
 
-* faster testing
-* clear system contracts
+* faster validation
+* incremental complexity
 * easier debugging
-* incremental development
 
 ---
 
-# 15. JSON Payload Validation
+# 22. Deployment Strategy
 
 ## Decision
 
-Use **Pydantic models in FastAPI** for validation.
-
-Example:
-
-```python
-class EmailTask(BaseModel):
-    email: str
-    subject: str
-```
+Use **Docker Compose**.
 
 ## Reason
 
 Advantages:
 
-* ensures payload correctness
-* prevents malformed tasks
-* improves API reliability
+* reproducible environment
+* easy local deployment
+* service isolation
 
 ---
 
-# 16. Observability (Future)
+# 23. System Tradeoffs
 
-Monitoring will later include:
-
-* task execution time
-* queue backlog
-* worker utilization
-* failure rate
-
-This will allow system performance tuning.
-
----
-
-# 17. Future Enhancements
-
-Possible future improvements:
-
-* dynamic worker scaling
-* scheduled tasks
-* distributed event streaming
-* monitoring dashboards
-* AI workload integration
-
-These features will evolve as the system grows.
+| Area      | Choice        | Tradeoff                            |
+| --------- | ------------- | ----------------------------------- |
+| Execution | At-least-once | duplicates possible                 |
+| Metrics   | Redis         | non-persistent                      |
+| Logging   | stdout        | requires external tools for scaling |
+| Queue     | Redis         | not durable like Kafka              |
 
 ---
 
 # Final Philosophy
 
-The architecture follows these principles:
+The system follows:
 
-* reliability before complexity
-* simple components with clear responsibilities
-* failure recovery built into system design
-* incremental system evolution
+* simplicity over premature complexity
+* reliability over optimization
+* clear ownership model
+* observable system design
+* incremental evolution
 
-The goal is to build a **production-style backend system while maintaining simplicity during development**.
+The goal is to build a **production-style distributed system while maintaining clarity and control**.
+
+---

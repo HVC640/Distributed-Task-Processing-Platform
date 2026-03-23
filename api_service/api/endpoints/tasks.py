@@ -1,5 +1,6 @@
 import traceback
 
+from fastapi import Request
 from fastapi import APIRouter, HTTPException
 from shared.db import task_repository
 from shared.models.task import CreateTaskRequest
@@ -14,19 +15,45 @@ logger = get_logger("api_service")
 router = APIRouter()
 
 
+def get_user_id(request: Request, uploaded_by: str | None):
+
+    def get_client_ip(request: Request):
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip
+
+        return request.client.host if request.client else "anonymous"
+
+    # Priority 1: API Key
+    api_key = request.headers.get("X-API-KEY")
+    if api_key:
+        return f"api_key:{api_key}"
+
+    # Priority 2: Uploaded_by (optional)
+    if uploaded_by:
+        return f"user:{uploaded_by}"
+
+    # Priority 3: IP fallback
+    return f"ip:{get_client_ip(request)}"
+
+
 @router.post("/tasks", response_model=dict)
 async def create_task(request: CreateTaskRequest):
     """
     Create a new task
     """
     try:
-        user_id = request.uploaded_by or "anonymous"
+        user_id = get_user_id(request, request.uploaded_by)
         if not token_bucket.is_allowed(user_id):
             logger.warning("Rate limit exceeded for user", extra={"extra_data": {
                            "event": "rate_limit_exceeded", "user_id": user_id}})
             raise HTTPException(
                 status_code=429, detail="Rate limit exceeded. Please try again later.")
-        
+
         logger.info("Creating new task", extra={"extra_data": {
                     "event": "create_task", "request": request.model_dump_json()}})
         task_id = task_repository.add_task(
