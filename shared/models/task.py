@@ -11,10 +11,12 @@ class Task(BaseModel):
     result: Optional[dict] = None
 
 # Request model for creating tasks
+
+
 class CreateTaskRequest(BaseModel):
     task_type: str
     payload: Optional[dict] = None
     priority: Optional[str] = "low"
-    uploaded_by: Optional[str] = "localhost"
+    uploaded_by: Optional[str] = "anonymous"
     scheduled_for: str = None
     max_retries: int = 3

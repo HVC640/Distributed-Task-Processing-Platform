@@ -1,6 +1,8 @@
 from worker_service.worker import start_worker
+from shared.logging.logger import get_logger
 
 if __name__ == "__main__":
-    print("Starting Worker Service...")
+    logger = get_logger("worker_service")
+    logger.info("Starting Worker Service...")
     start_worker()
-    print("Worker Service stopped.")
+    logger.info("Worker Service stopped.")

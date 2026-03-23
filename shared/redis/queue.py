@@ -1,5 +1,4 @@
 import os
-
 import redis
 from shared.config.config import REDIS_CONFIG
 

@@ -9,7 +9,12 @@ DB_CONFIG = {
 REDIS_CONFIG = {
     "host": "localhost",
     "port": 6379,
-    "database": 0
+    "database": 0    
+}
+
+RATE_LIMIT_CONFIG = {
+    "capacity": 10,        # max burst
+    "refill_rate": 1      # tokens per second
 }
 
 WORKER_CONFIG = {
