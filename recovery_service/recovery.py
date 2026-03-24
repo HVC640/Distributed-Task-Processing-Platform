@@ -4,6 +4,7 @@ from shared.config.config import RECOVERY_CONFIG
 from shared.logging.logger import get_logger
 import time
 
+
 def start_recovery():
     logger = get_logger("recovery_service")
     while True:
@@ -12,4 +13,6 @@ def start_recovery():
         for key in tasks:
             logger.info(f"Recovering task with key: {key}")
             recover_task(key)
-        time.sleep(RECOVERY_CONFIG["recovery_interval"])  # Sleep for a while before checking for tasks
+        time.sleep(
+            RECOVERY_CONFIG["recovery_interval"]
+        )  # Sleep for a while before checking for tasks

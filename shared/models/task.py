@@ -10,6 +10,7 @@ class Task(BaseModel):
     created_at: datetime
     result: Optional[dict] = None
 
+
 # Request model for creating tasks
 
 

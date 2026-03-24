@@ -5,10 +5,11 @@ from shared.config.config import REDIS_CONFIG
 
 # Assuming a Redis client is initialized; adjust as needed
 r = redis.Redis(
-    host=os.getenv('REDIS_HOST', REDIS_CONFIG["host"]),
-    port=os.getenv('REDIS_PORT', REDIS_CONFIG["port"]),
-    db=os.getenv('REDIS_DATABASE', REDIS_CONFIG["database"])
+    host=os.getenv("REDIS_HOST", REDIS_CONFIG["host"]),
+    port=os.getenv("REDIS_PORT", REDIS_CONFIG["port"]),
+    db=os.getenv("REDIS_DATABASE", REDIS_CONFIG["database"]),
 )
+
 
 # -------- COUNTERS --------
 def increment(metric_name: str, value: int = 1):

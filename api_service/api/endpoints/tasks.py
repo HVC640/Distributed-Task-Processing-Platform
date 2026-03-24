@@ -49,33 +49,55 @@ async def create_task(http_request: Request, request: CreateTaskRequest):
     try:
         user_id = get_user_id(http_request, request.uploaded_by)
         if not token_bucket.is_allowed(user_id):
-            logger.warning("Rate limit exceeded for user", extra={"extra_data": {
-                           "event": "rate_limit_exceeded", "user_id": user_id}})
+            logger.warning(
+                "Rate limit exceeded for user",
+                extra={
+                    "extra_data": {"event": "rate_limit_exceeded", "user_id": user_id}
+                },
+            )
             raise HTTPException(
-                status_code=429, detail="Rate limit exceeded. Please try again later.")
+                status_code=429, detail="Rate limit exceeded. Please try again later."
+            )
 
-        logger.info("Creating new task", extra={"extra_data": {
-                    "event": "create_task", "request": request.model_dump_json()}})
+        logger.info(
+            "Creating new task",
+            extra={
+                "extra_data": {
+                    "event": "create_task",
+                    "request": request.model_dump_json(),
+                }
+            },
+        )
         task_id = task_repository.add_task(
             task_type=request.task_type,
             payload=request.payload,
             priority=request.priority,
             uploaded_by=request.uploaded_by,
             scheduled_for=request.scheduled_for,
-            max_retries=request.max_retries
+            max_retries=request.max_retries,
         )
         redis_queue.enqueue_task(task_id, priority=request.priority)
         metrics.increment("tasks_created")
-        logger.info("Task created and enqueued", extra={"extra_data": {
-                    "event": "task_created", "task_id": task_id}})
+        logger.info(
+            "Task created and enqueued",
+            extra={"extra_data": {"event": "task_created", "task_id": task_id}},
+        )
 
         return {"task_id": task_id, "message": "Task created successfully"}
 
     except Exception as e:
-        logger.error("Failed to create task", extra={"extra_data": {"event": "create_task_failed", "request": request.model_dump_json(
-        ), "error": str(e), "traceback": traceback.format_exc()}})
-        raise HTTPException(
-            status_code=500, detail=f"Failed to create task: {str(e)}")
+        logger.error(
+            "Failed to create task",
+            extra={
+                "extra_data": {
+                    "event": "create_task_failed",
+                    "request": request.model_dump_json(),
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
+            },
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to create task: {str(e)}")
 
 
 @router.get("/tasks/{task_id}")
@@ -84,8 +106,10 @@ async def get_task(task_id: str):
     Get a specific task by ID
     """
     try:
-        logger.info("Retrieving task", extra={"extra_data": {
-                    "event": "get_task", "task_id": task_id}})
+        logger.info(
+            "Retrieving task",
+            extra={"extra_data": {"event": "get_task", "task_id": task_id}},
+        )
         task = task_repository.get_task_by_id(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -93,10 +117,20 @@ async def get_task(task_id: str):
         return task
 
     except Exception as e:
-        logger.error("Failed to retrieve task", extra={"extra_data": {
-                     "event": "get_task_failed", "task_id": task_id, "error": str(e), "traceback": traceback.format_exc()}})
+        logger.error(
+            "Failed to retrieve task",
+            extra={
+                "extra_data": {
+                    "event": "get_task_failed",
+                    "task_id": task_id,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
+            },
+        )
         raise HTTPException(
-            status_code=500, detail=f"Failed to retrieve task: {str(e)}")
+            status_code=500, detail=f"Failed to retrieve task: {str(e)}"
+        )
 
 
 @router.get("/tasks")
@@ -105,20 +139,31 @@ async def get_tasks():
     Get all tasks
     """
     try:
-        logger.info("Retrieving all tasks", extra={
-                    "extra_data": {"event": "get_tasks"}})
+        logger.info(
+            "Retrieving all tasks", extra={"extra_data": {"event": "get_tasks"}}
+        )
         tasks = task_repository.get_all_tasks()
         return tasks
 
     except HTTPException:
-        logger.warning("No tasks found", extra={"extra_data": {
-                       "event": "get_tasks_no_tasks"}})
+        logger.warning(
+            "No tasks found", extra={"extra_data": {"event": "get_tasks_no_tasks"}}
+        )
         raise
     except Exception as e:
-        logger.error("Failed to retrieve tasks", extra={"extra_data": {
-                     "event": "get_tasks_failed", "error": str(e), "traceback": traceback.format_exc()}})
+        logger.error(
+            "Failed to retrieve tasks",
+            extra={
+                "extra_data": {
+                    "event": "get_tasks_failed",
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
+            },
+        )
         raise HTTPException(
-            status_code=500, detail=f"Failed to retrieve tasks: {str(e)}")
+            status_code=500, detail=f"Failed to retrieve tasks: {str(e)}"
+        )
 
 
 @router.put("/tasks/{task_id}/status")
@@ -127,8 +172,17 @@ async def update_task_status_endpoint(task_id: str, status: str, result: dict = 
     Update the status of a task
     """
     try:
-        logger.info("Updating task status", extra={"extra_data": {
-                    "event": "update_task_status", "task_id": task_id, "status": status, "result": result}})
+        logger.info(
+            "Updating task status",
+            extra={
+                "extra_data": {
+                    "event": "update_task_status",
+                    "task_id": task_id,
+                    "status": status,
+                    "result": result,
+                }
+            },
+        )
         success = task_repository.update_task_status(task_id, status, result)
         if not success:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -136,14 +190,33 @@ async def update_task_status_endpoint(task_id: str, status: str, result: dict = 
         return {"message": "Task status updated successfully"}
 
     except HTTPException:
-        logger.warning("Task not found for status update", extra={"extra_data": {
-                       "event": "update_task_status_not_found", "task_id": task_id}})
+        logger.warning(
+            "Task not found for status update",
+            extra={
+                "extra_data": {
+                    "event": "update_task_status_not_found",
+                    "task_id": task_id,
+                }
+            },
+        )
         raise
     except Exception as e:
-        logger.error("Failed to update task status", extra={"extra_data": {
-                     "event": "update_task_status_failed", "task_id": task_id, "status": status, "result": result, "error": str(e), "traceback": traceback.format_exc()}})
+        logger.error(
+            "Failed to update task status",
+            extra={
+                "extra_data": {
+                    "event": "update_task_status_failed",
+                    "task_id": task_id,
+                    "status": status,
+                    "result": result,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
+            },
+        )
         raise HTTPException(
-            status_code=500, detail=f"Failed to update task status: {str(e)}")
+            status_code=500, detail=f"Failed to update task status: {str(e)}"
+        )
 
 
 @router.get("/metrics")

@@ -5,7 +5,9 @@ from shared.db import connections
 import json
 
 
-def add_task(task_type, payload, priority, uploaded_by, scheduled_for=None, max_retries=3):
+def add_task(
+    task_type, payload, priority, uploaded_by, scheduled_for=None, max_retries=3
+):
     """
     Inserts a new task into the tasks table.
     """
@@ -36,8 +38,8 @@ def add_task(task_type, payload, priority, uploaded_by, scheduled_for=None, max_
                     "PENDING",
                     uploaded_by,
                     scheduled_for,
-                    max_retries
-                )
+                    max_retries,
+                ),
             )
 
             task_id = cursor.fetchone()["task_id"]
@@ -73,7 +75,11 @@ def get_task_by_id(task_id):
                     "id": str(result["task_id"]),
                     "task_type": result["task_type"],
                     "priority": result["priority"],
-                    "payload": result["payload"] if isinstance(result["payload"], dict) else json.loads(result["payload"] or "{}"),
+                    "payload": (
+                        result["payload"]
+                        if isinstance(result["payload"], dict)
+                        else json.loads(result["payload"] or "{}")
+                    ),
                     "status": result["status"].lower(),
                     "uploaded_by": result["uploaded_by"],
                     "scheduled_for": result["scheduled_for"],
@@ -84,7 +90,11 @@ def get_task_by_id(task_id):
                     "max_retries": result["max_retries"],
                     "created_at": result["created_at"],
                     "started_at": result["started_at"],
-                    "result": result["result"] if isinstance(result["result"], dict) else result["result"]
+                    "result": (
+                        result["result"]
+                        if isinstance(result["result"], dict)
+                        else result["result"]
+                    ),
                 }
             return None
 
@@ -119,7 +129,7 @@ def get_all_tasks():
                     "payload": result["payload"],
                     "created_at": result["created_at"],
                     "started_at": result["started_at"],
-                    "result": result["result"]
+                    "result": result["result"],
                 }
                 tasks.append(task)
 
@@ -145,12 +155,7 @@ def update_task_status(task_id, status, result=None):
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                query,
-                (
-                    status.upper(),
-                    json.dumps(result) if result else None,
-                    task_id
-                )
+                query, (status.upper(), json.dumps(result) if result else None, task_id)
             )
             conn.commit()
 
@@ -179,8 +184,7 @@ def claim_task(task_id, worker_id):
     conn = connections.get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                query, (worker_id, WORKER_CONFIG["lease_duration"], task_id))
+            cursor.execute(query, (worker_id, WORKER_CONFIG["lease_duration"], task_id))
             conn.commit()
 
             return cursor.rowcount > 0
@@ -224,8 +228,7 @@ def update_heartbeat(task_id, WORKER_ID):
     conn = connections.get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                query, (WORKER_CONFIG["lease_duration"], task_id, WORKER_ID))
+            cursor.execute(query, (WORKER_CONFIG["lease_duration"], task_id, WORKER_ID))
             conn.commit()
 
     finally:
