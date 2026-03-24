@@ -125,8 +125,6 @@ def get_all_tasks():
 
             return tasks
     except Exception as e:
-        print(f"Error fetching tasks: {e}")
-        print(traceback.format_exc())
         return []
 
     finally:

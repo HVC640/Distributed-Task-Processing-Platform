@@ -42,12 +42,12 @@ def get_user_id(request: Request, uploaded_by: str | None):
 
 
 @router.post("/tasks", response_model=dict)
-async def create_task(request: CreateTaskRequest):
+async def create_task(http_request: Request, request: CreateTaskRequest):
     """
     Create a new task
     """
     try:
-        user_id = get_user_id(request, request.uploaded_by)
+        user_id = get_user_id(http_request, request.uploaded_by)
         if not token_bucket.is_allowed(user_id):
             logger.warning("Rate limit exceeded for user", extra={"extra_data": {
                            "event": "rate_limit_exceeded", "user_id": user_id}})
